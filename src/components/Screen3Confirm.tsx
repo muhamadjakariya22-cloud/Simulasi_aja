@@ -21,11 +21,11 @@ export const Screen3Confirm: React.FC<Screen3ConfirmProps> = ({
       {/* Top-Left Confirmation Header & Utility Row */}
       <header className="w-full pt-4 sm:pt-6 px-4 sm:px-6 flex items-start justify-between gap-4">
         <div className="text-left max-w-xl">
-          <h1 className="text-lg sm:text-2xl font-bold text-[#0F172A] leading-tight">
+          <h1 className="text-lg sm:text-2xl font-extrabold text-[#0F172A] leading-tight">
             Konfirmasi Pemilihan
           </h1>
-          <p className="mt-0.5 text-xs sm:text-sm font-medium text-[#1E293B] leading-snug">
-            Apakah anda yakin dengan pilihan ini? Pilihan tidak dapat diubah setelah disimpan
+          <p className="mt-0.5 text-xs sm:text-sm font-normal text-[#1E293B] leading-snug">
+            Apakah Anda yakin dengan pilihan ini? Pilihan tidak dapat diubah setelah disimpan
           </p>
         </div>
         <div className="shrink-0">

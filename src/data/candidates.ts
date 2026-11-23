@@ -4,7 +4,7 @@ export const CANDIDATES: Candidate[] = [
   {
     id: 'kandidat-1',
     number: '1',
-    name: 'kandidat no 1',
+    name: 'KANDIDAT NO 1',
     variant: 'silhouette',
   },
   {
