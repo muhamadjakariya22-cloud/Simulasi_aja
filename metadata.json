@@ -1,0 +1,6 @@
+{
+  "name": "Surat Suara - e-Voting Pilkades",
+  "description": "Aplikasi e-Voting Pemilihan Kepala Desa berbasis Web Offline dengan pemindai QR KTP dan bukti QRIS.",
+  "requestFramePermissions": ["camera"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
