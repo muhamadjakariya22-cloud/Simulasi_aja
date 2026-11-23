@@ -18,10 +18,20 @@ export const Screen3Confirm: React.FC<Screen3ConfirmProps> = ({
 }) => {
   return (
     <div className="min-h-[100dvh] w-full flex flex-col justify-between bg-gradient-to-b from-[#BCE0AC] via-[#D8ECCF] to-[#E6F4FA] select-none">
-      {/* Subtle Top Utility Row (PWA install / offline indicator only when active) */}
-      <div className="w-full pt-3 px-4 flex justify-end min-h-[36px]">
-        <PWAStatusControls />
-      </div>
+      {/* Top-Left Confirmation Header & Utility Row */}
+      <header className="w-full pt-4 sm:pt-6 px-4 sm:px-6 flex items-start justify-between gap-4">
+        <div className="text-left max-w-xl">
+          <h1 className="text-lg sm:text-2xl font-bold text-[#0F172A] leading-tight">
+            Konfirmasi Pemilihan
+          </h1>
+          <p className="mt-0.5 text-xs sm:text-sm font-medium text-[#1E293B] leading-snug">
+            Apakah anda yakin dengan pilihan ini? Pilihan tidak dapat diubah setelah disimpan
+          </p>
+        </div>
+        <div className="shrink-0">
+          <PWAStatusControls />
+        </div>
+      </header>
 
       {/* Center Selected Candidate Card */}
       <main className="flex-1 flex items-center justify-center px-5 py-4">
@@ -51,9 +61,9 @@ export const Screen3Confirm: React.FC<Screen3ConfirmProps> = ({
 
           {/* Candidate Name Footer */}
           <div className="bg-white py-4 sm:py-5 px-3 text-center">
-            <h1 className="text-lg sm:text-2xl font-medium text-[#111827] tracking-tight leading-tight">
+            <h2 className="text-lg sm:text-2xl font-medium text-[#111827] tracking-tight leading-tight">
               {candidate.name}
-            </h1>
+            </h2>
           </div>
         </div>
       </main>

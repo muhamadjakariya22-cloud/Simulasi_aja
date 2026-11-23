@@ -34,25 +34,20 @@ export const Screen2Ballot: React.FC<Screen2BallotProps> = ({
 
   return (
     <div className="min-h-[100dvh] w-full flex flex-col justify-between bg-gradient-to-b from-[#C8E2B8] via-[#E5F0DC] to-[#F7F9F5] select-none">
-      {/* Top Village Emblem & Condensed Header */}
-      <header className="relative w-full pt-3 sm:pt-5 pb-2 px-4">
+      {/* Top Condensed Header (No Logo) */}
+      <header className="relative w-full pt-5 sm:pt-7 pb-2 px-4">
         <div className="absolute right-4 top-3 z-10">
           <PWAStatusControls />
         </div>
         <div className="mx-auto max-w-2xl flex flex-col items-center text-center">
-          <img
-            src="./assets/extracted/desa_subang_emblem.png"
-            alt="Lambang Desa Curugrendeng"
-            className="w-16 h-20 sm:w-20 sm:h-24 object-contain"
-          />
-          <h1 className="mt-1.5 font-condensed text-4xl sm:text-5xl font-extrabold tracking-tight text-[#0F172A] leading-none uppercase">
+          <h1 className="font-condensed text-4xl sm:text-5xl font-extrabold tracking-tight text-[#0F172A] leading-none uppercase">
             SURAT SUARA
           </h1>
-          <p className="mt-1 font-condensed text-xl sm:text-2xl font-semibold tracking-wide text-[#0F172A] leading-tight uppercase">
-            PEMILIHAN KEPALA DESA
+          <p className="mt-1.5 font-condensed text-xl sm:text-2xl font-bold tracking-wide text-[#0F172A] leading-tight uppercase">
+            PEMILIHAN KEPALA DESA CURUGRENDENG
           </p>
-          <p className="font-condensed text-lg sm:text-xl font-semibold tracking-wide text-[#0F172A] leading-tight uppercase">
-            DESA CURUGRENDENG
+          <p className="mt-1 text-sm sm:text-base font-medium text-[#1E293B] leading-snug">
+            Minggu, 6 Desember 2026
           </p>
         </div>
       </header>
@@ -124,12 +119,12 @@ export const Screen2Ballot: React.FC<Screen2BallotProps> = ({
         )}
       </main>
 
-      {/* Full-Width Bottom Red Banner */}
+      {/* Full-Width Bottom Blue Banner */}
       <footer className="w-full shrink-0">
         <button
           type="button"
           onClick={handleConfirmPress}
-          className="w-full min-h-[60px] sm:min-h-[72px] bg-[#DE0A0A] hover:bg-[#C20808] active:bg-[#A60606] font-condensed text-3xl sm:text-4xl font-extrabold tracking-wide uppercase text-white transition flex items-center justify-center cursor-pointer"
+          className="w-full min-h-[60px] sm:min-h-[72px] bg-[#1086E8] hover:bg-[#0D74CA] active:bg-[#0B62AC] font-condensed text-3xl sm:text-4xl font-extrabold tracking-wide uppercase text-white transition flex items-center justify-center cursor-pointer"
         >
           PILIH KANDIDAT INI
         </button>
