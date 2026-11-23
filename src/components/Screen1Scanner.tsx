@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import jsQR from 'jsqr';
-import { Camera, RefreshCw } from 'lucide-react';
+import { Camera, ExternalLink, Loader2, RefreshCw } from 'lucide-react';
 import { KtpVoterData } from '../types/voting';
 import { parseAndValidateKtpQr } from '../utils/ktpValidator';
 import { PWAStatusControls } from './PWAInstallBanner';
@@ -12,40 +12,196 @@ interface Screen1ScannerProps {
 type CameraState = 'initializing' | 'active' | 'denied' | 'unavailable';
 type ScanFeedbackState = 'scanning' | 'invalid';
 
-async function acquireCameraStream(): Promise<MediaStream> {
-  const attempts: MediaStreamConstraints[] = [
-    {
-      video: {
-        facingMode: { ideal: 'environment' },
-        width: { ideal: 1280 },
-        height: { ideal: 720 },
+const waitMs = (ms: number) => new Promise<void>((resolve) => window.setTimeout(resolve, ms));
+
+class CameraTimeoutError extends Error {
+  constructor(message = 'Timeout saat mengakses kamera') {
+    super(message);
+    this.name = 'CameraTimeoutError';
+  }
+}
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = window.setTimeout(() => {
+      reject(new CameraTimeoutError(label));
+    }, timeoutMs);
+
+    promise.then(
+      (value) => {
+        window.clearTimeout(timer);
+        resolve(value);
       },
-      audio: false,
+      (err) => {
+        window.clearTimeout(timer);
+        reject(err);
+      }
+    );
+  });
+}
+
+async function queryCameraPermissionState(): Promise<'granted' | 'denied' | 'prompt' | 'unknown'> {
+  try {
+    if (!navigator.permissions || typeof navigator.permissions.query !== 'function') {
+      return 'unknown';
+    }
+    const status = await withTimeout(
+      navigator.permissions.query({ name: 'camera' as PermissionName }),
+      1000,
+      'PermissionQueryTimeout'
+    );
+    return status.state;
+  } catch {
+    return 'unknown';
+  }
+}
+
+async function acquireCameraStream(
+  onStepChange?: (stepLabel: string) => void
+): Promise<MediaStream> {
+  const permState = await queryCameraPermissionState();
+  if (permState === 'denied') {
+    const deniedErr = new Error('Permission denied');
+    deniedErr.name = 'NotAllowedError';
+    throw deniedErr;
+  }
+
+  // If permission is already granted, hardware shouldn't take long;
+  // if browser may show a prompt, allow a bit more time on the first attempt.
+  const firstTimeout = permState === 'granted' ? 4500 : 7500;
+
+  const attempts: Array<{ label: string; constraints: MediaStreamConstraints; timeout: number }> = [
+    {
+      label: 'Membuka kamera belakang...',
+      constraints: {
+        video: {
+          facingMode: { ideal: 'environment' },
+          width: { ideal: 1280 },
+          height: { ideal: 720 },
+        },
+        audio: false,
+      },
+      timeout: firstTimeout,
     },
     {
-      video: { facingMode: 'environment' },
-      audio: false,
+      label: 'Mencoba mode kamera standar...',
+      constraints: {
+        video: { facingMode: { ideal: 'environment' } },
+        audio: false,
+      },
+      timeout: 4500,
     },
     {
-      video: true,
-      audio: false,
+      label: 'Mencoba kamera utama perangkat...',
+      constraints: {
+        video: true,
+        audio: false,
+      },
+      timeout: 4500,
     },
   ];
 
   let lastError: unknown;
   for (let i = 0; i < attempts.length; i++) {
+    onStepChange?.(attempts[i].label);
     try {
-      return await navigator.mediaDevices.getUserMedia(attempts[i]);
+      return await withTimeout(
+        navigator.mediaDevices.getUserMedia(attempts[i].constraints),
+        attempts[i].timeout,
+        'GetUserMediaTimeout'
+      );
     } catch (err) {
       lastError = err;
       const name = (err as DOMException)?.name;
-      // If user explicitly denied permission or site is insecure, do not retry further constraints
+      // If user/policy explicitly blocked permission or site is insecure, stop immediately
       if (name === 'NotAllowedError' || name === 'PermissionDeniedError' || name === 'SecurityError') {
         throw err;
       }
+      // If hardware was briefly still releasing from a previous stream, wait briefly before simpler constraint
+      if (name === 'NotReadableError' || name === 'TrackStartError') {
+        await waitMs(220);
+      }
     }
   }
+
+  // Fallback: enumerate individual video input devices (helps on multi-lens Android or laptops with virtual cameras)
+  if (typeof navigator.mediaDevices.enumerateDevices === 'function') {
+    onStepChange?.('Mencari perangkat kamera tersedia...');
+    try {
+      const devices = await withTimeout(
+        navigator.mediaDevices.enumerateDevices(),
+        2500,
+        'EnumerateDevicesTimeout'
+      );
+      const videoDevices = devices
+        .filter((d) => d.kind === 'videoinput' && Boolean(d.deviceId))
+        .sort((a, b) => {
+          const aRear = /back|rear|environment|belakang/i.test(a.label) ? 0 : 1;
+          const bRear = /back|rear|environment|belakang/i.test(b.label) ? 0 : 1;
+          return aRear - bRear;
+        });
+
+      for (const device of videoDevices) {
+        try {
+          return await withTimeout(
+            navigator.mediaDevices.getUserMedia({
+              video: { deviceId: { exact: device.deviceId } },
+              audio: false,
+            }),
+            4000,
+            'DeviceIdCameraTimeout'
+          );
+        } catch (err) {
+          lastError = err;
+          const name = (err as DOMException)?.name;
+          if (name === 'NotAllowedError' || name === 'PermissionDeniedError' || name === 'SecurityError') {
+            throw err;
+          }
+        }
+      }
+    } catch (enumErr) {
+      lastError = enumErr;
+    }
+  }
+
   throw lastError;
+}
+
+async function attachAndPlayVideo(video: HTMLVideoElement, stream: MediaStream): Promise<void> {
+  video.muted = true;
+  video.defaultMuted = true;
+  video.autoplay = true;
+  video.playsInline = true;
+  video.setAttribute('muted', '');
+  video.setAttribute('autoplay', '');
+  video.setAttribute('playsinline', 'true');
+  video.setAttribute('webkit-playsinline', 'true');
+  video.srcObject = stream;
+
+  // Trigger play immediately, but never let a stalled play() promise hang initialization
+  const playAttempt = video.play().catch(() => {});
+
+  if (video.readyState < 1) {
+    await new Promise<void>((resolve) => {
+      let settled = false;
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        video.removeEventListener('loadedmetadata', finish);
+        video.removeEventListener('canplay', finish);
+        window.clearTimeout(fallbackTimer);
+        resolve();
+      };
+      const fallbackTimer = window.setTimeout(finish, 900);
+      video.addEventListener('loadedmetadata', finish, { once: true });
+      video.addEventListener('canplay', finish, { once: true });
+    });
+  }
+
+  await Promise.race([playAttempt, waitMs(700)]);
+  if (video.srcObject === stream && video.paused) {
+    void video.play().catch(() => {});
+  }
 }
 
 export const Screen1Scanner: React.FC<Screen1ScannerProps> = ({ onKtpVerified }) => {
@@ -53,21 +209,48 @@ export const Screen1Scanner: React.FC<Screen1ScannerProps> = ({ onKtpVerified })
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const scanTimerRef = useRef<number | null>(null);
+  const initHintTimerRef = useRef<number | null>(null);
   const invalidCooldownRef = useRef<number>(0);
   const hasVerifiedRef = useRef<boolean>(false);
+  const isMountedRef = useRef<boolean>(true);
+  const requestSeqRef = useRef<number>(0);
+  const isAcquiringRef = useRef<boolean>(false);
+  const onKtpVerifiedRef = useRef(onKtpVerified);
+  onKtpVerifiedRef.current = onKtpVerified;
 
   const [cameraState, setCameraState] = useState<CameraState>('initializing');
+  const [initStepText, setInitStepText] = useState<string>('Menyiapkan kamera...');
   const [cameraErrorMsg, setCameraErrorMsg] = useState<string>('');
   const [cameraErrorCode, setCameraErrorCode] = useState<string>('');
   const [scanFeedback, setScanFeedback] = useState<ScanFeedbackState>('scanning');
+  const [showManualRetry, setShowManualRetry] = useState<boolean>(false);
+
+  const isInIframe =
+    typeof window !== 'undefined' &&
+    (() => {
+      try {
+        return window.self !== window.top;
+      } catch {
+        return true;
+      }
+    })();
 
   const stopCamera = useCallback(() => {
+    requestSeqRef.current += 1;
+    isAcquiringRef.current = false;
+    if (initHintTimerRef.current !== null) {
+      window.clearTimeout(initHintTimerRef.current);
+      initHintTimerRef.current = null;
+    }
     if (scanTimerRef.current !== null) {
       window.clearTimeout(scanTimerRef.current);
       scanTimerRef.current = null;
     }
     if (streamRef.current) {
-      streamRef.current.getTracks().forEach((track) => track.stop());
+      streamRef.current.getTracks().forEach((track) => {
+        track.onended = null;
+        track.stop();
+      });
       streamRef.current = null;
     }
     if (videoRef.current) {
@@ -76,10 +259,13 @@ export const Screen1Scanner: React.FC<Screen1ScannerProps> = ({ onKtpVerified })
   }, []);
 
   const performScanTick = useCallback(() => {
-    if (hasVerifiedRef.current) return;
+    if (!isMountedRef.current || hasVerifiedRef.current) return;
 
     const video = videoRef.current;
     if (!video || video.readyState < 2 || video.videoWidth === 0 || video.videoHeight === 0) {
+      if (video && video.paused && streamRef.current?.active) {
+        void video.play().catch(() => {});
+      }
       scanTimerRef.current = window.setTimeout(performScanTick, 160);
       return;
     }
@@ -116,7 +302,7 @@ export const Screen1Scanner: React.FC<Screen1ScannerProps> = ({ onKtpVerified })
         if (validation.valid) {
           hasVerifiedRef.current = true;
           stopCamera();
-          onKtpVerified(validation.data);
+          onKtpVerifiedRef.current(validation.data);
           return;
         } else {
           const now = Date.now();
@@ -129,90 +315,199 @@ export const Screen1Scanner: React.FC<Screen1ScannerProps> = ({ onKtpVerified })
     }
 
     scanTimerRef.current = window.setTimeout(performScanTick, 150);
-  }, [onKtpVerified, stopCamera]);
+  }, [stopCamera]);
 
-  const startCamera = useCallback(async () => {
-    hasVerifiedRef.current = false;
-    setScanFeedback('scanning');
+  const startCamera = useCallback(
+    async (forceRestart = false) => {
+      hasVerifiedRef.current = false;
+      setScanFeedback('scanning');
 
-    if (typeof window !== 'undefined' && !window.isSecureContext) {
-      setCameraState('unavailable');
-      setCameraErrorCode('InsecureContext');
-      setCameraErrorMsg(
-        'Alamat web tidak memakai HTTPS. Buka menggunakan https:// agar kamera diizinkan.'
-      );
-      return;
-    }
-
-    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-      setCameraState('unavailable');
-      setCameraErrorCode('MediaDevicesUnsupported');
-      setCameraErrorMsg(
-        'Browser ini tidak mendukung kamera langsung. Buka link ini lewat Google Chrome (Android) atau Safari (iPhone/iPad), jangan dari browser dalam WhatsApp.'
-      );
-      return;
-    }
-
-    // If stream is already running smoothly, do not re-initialize to avoid flicker
-    if (streamRef.current && streamRef.current.active) {
-      setCameraState('active');
-      if (scanTimerRef.current === null) {
-        performScanTick();
-      }
-      return;
-    }
-
-    setCameraState('initializing');
-    setCameraErrorMsg('');
-    setCameraErrorCode('');
-
-    try {
-      const stream = await acquireCameraStream();
-      streamRef.current = stream;
-
-      const video = videoRef.current;
-      if (video) {
-        video.muted = true;
-        video.setAttribute('playsinline', 'true');
-        video.srcObject = stream;
-        await video.play().catch(() => {});
-      }
-
-      setCameraState('active');
-      if (scanTimerRef.current !== null) {
-        window.clearTimeout(scanTimerRef.current);
-      }
-      scanTimerRef.current = window.setTimeout(performScanTick, 200);
-    } catch (err) {
-      const error = err as DOMException;
-      const errName = error?.name || 'UnknownError';
-      setCameraErrorCode(errName);
-
-      if (errName === 'NotAllowedError' || errName === 'PermissionDeniedError' || errName === 'SecurityError') {
-        setCameraState('denied');
-        setCameraErrorMsg(
-          'Izin kamera diblokir. Ketuk ikon pengaturan/gembok di sebelah URL browser lalu pilih Izinkan Kamera, dan pastikan dibuka lewat Chrome/Safari (bukan browser WhatsApp).'
-        );
-      } else if (errName === 'NotReadableError' || errName === 'TrackStartError') {
+      if (typeof window !== 'undefined' && !window.isSecureContext) {
         setCameraState('unavailable');
+        setCameraErrorCode('InsecureContext');
         setCameraErrorMsg(
-          'Kamera sedang dipakai oleh aplikasi atau tab lain. Tutup aplikasi kamera lain lalu ketuk Coba Aktifkan Kamera.'
+          'Alamat web tidak memakai HTTPS. Buka menggunakan https:// agar kamera diizinkan.'
         );
-      } else if (errName === 'NotFoundError' || errName === 'DevicesNotFoundError') {
-        setCameraState('unavailable');
-        setCameraErrorMsg('Kamera tidak ditemukan pada perangkat ini.');
-      } else {
-        setCameraState('unavailable');
-        setCameraErrorMsg(
-          'Kamera gagal dimulai. Pastikan link dibuka di Google Chrome atau Safari, lalu ketuk tombol di bawah.'
-        );
+        return;
       }
-    }
-  }, [performScanTick]);
+
+      if (!navigator.mediaDevices || typeof navigator.mediaDevices.getUserMedia !== 'function') {
+        setCameraState('unavailable');
+        setCameraErrorCode('MediaDevicesUnsupported');
+        setCameraErrorMsg(
+          'Browser ini tidak mendukung kamera langsung. Buka link ini lewat Google Chrome (Android) atau Safari (iPhone/iPad), jangan dari browser dalam WhatsApp.'
+        );
+        return;
+      }
+
+      const activeTracks = streamRef.current?.getVideoTracks() ?? [];
+      const hasLiveTrack =
+        !forceRestart &&
+        Boolean(streamRef.current?.active) &&
+        activeTracks.some((track) => track.readyState === 'live');
+
+      if (hasLiveTrack && videoRef.current) {
+        if (videoRef.current.srcObject !== streamRef.current) {
+          await attachAndPlayVideo(videoRef.current, streamRef.current!);
+        } else if (videoRef.current.paused) {
+          await videoRef.current.play().catch(() => {});
+        }
+        if (!isMountedRef.current) return;
+        setCameraState('active');
+        if (scanTimerRef.current === null) {
+          performScanTick();
+        }
+        return;
+      }
+
+      // Stop any previous or stale stream cleanly before opening a fresh one
+      stopCamera();
+      const requestId = ++requestSeqRef.current;
+      isAcquiringRef.current = true;
+
+      setCameraState('initializing');
+      setInitStepText('Menyiapkan kamera...');
+      setCameraErrorMsg('');
+      setCameraErrorCode('');
+      setShowManualRetry(false);
+
+      initHintTimerRef.current = window.setTimeout(() => {
+        if (isMountedRef.current && requestSeqRef.current === requestId) {
+          setShowManualRetry(true);
+        }
+      }, 900);
+
+      try {
+        const stream = await acquireCameraStream((stepLabel) => {
+          if (isMountedRef.current && requestSeqRef.current === requestId) {
+            setInitStepText(stepLabel);
+          }
+        });
+
+        if (!isMountedRef.current || requestSeqRef.current !== requestId) {
+          stream.getTracks().forEach((track) => track.stop());
+          return;
+        }
+
+        isAcquiringRef.current = false;
+        if (initHintTimerRef.current !== null) {
+          window.clearTimeout(initHintTimerRef.current);
+          initHintTimerRef.current = null;
+        }
+
+        streamRef.current = stream;
+
+        const videoTrack = stream.getVideoTracks()[0];
+        if (videoTrack) {
+          videoTrack.onended = () => {
+            if (!isMountedRef.current || hasVerifiedRef.current) return;
+            streamRef.current = null;
+            setCameraState('unavailable');
+            setCameraErrorCode('TrackEnded');
+            setCameraErrorMsg(
+              'Koneksi kamera terputus. Ketuk tombol di bawah untuk mengaktifkan kamera kembali.'
+            );
+          };
+        }
+
+        const video = videoRef.current;
+        if (video) {
+          setInitStepText('Menampilkan pratinjau kamera...');
+          await attachAndPlayVideo(video, stream);
+        }
+
+        if (!isMountedRef.current || requestSeqRef.current !== requestId) {
+          return;
+        }
+
+        setCameraState('active');
+        setShowManualRetry(false);
+        if (scanTimerRef.current !== null) {
+          window.clearTimeout(scanTimerRef.current);
+        }
+        scanTimerRef.current = window.setTimeout(performScanTick, 180);
+      } catch (err) {
+        if (!isMountedRef.current || requestSeqRef.current !== requestId) {
+          return;
+        }
+
+        isAcquiringRef.current = false;
+        if (initHintTimerRef.current !== null) {
+          window.clearTimeout(initHintTimerRef.current);
+          initHintTimerRef.current = null;
+        }
+
+        const error = err as DOMException;
+        const errName = error?.name || 'UnknownError';
+        setCameraErrorCode(errName);
+        setShowManualRetry(true);
+
+        if (
+          errName === 'NotAllowedError' ||
+          errName === 'PermissionDeniedError' ||
+          errName === 'SecurityError'
+        ) {
+          setCameraState('denied');
+          setCameraErrorMsg(
+            isInIframe
+              ? 'Browser membatasi izin kamera di dalam pratinjau/iframe. Ketuk "Buka di Tab Baru" di bawah atau izinkan kamera pada ikon gembok di bilah alamat.'
+              : 'Izin kamera ditolak atau belum diizinkan. Ketuk ikon pengaturan/gembok di samping alamat URL lalu pilih Izinkan Kamera, kemudian ketuk tombol di bawah.'
+          );
+        } else if (errName === 'CameraTimeoutError') {
+          setCameraState('unavailable');
+          setCameraErrorMsg(
+            isInIframe
+              ? 'Permintaan kamera tidak mendapat respons di dalam pratinjau. Ketuk "Buka di Tab Baru" agar browser memunculkan izin kamera secara langsung.'
+              : 'Kamera terlalu lama merespons. Pastikan tidak ada dialog izin yang tertunda atau aplikasi kamera lain yang terbuka, lalu ketuk Coba Aktifkan Kamera.'
+          );
+        } else if (errName === 'NotReadableError' || errName === 'TrackStartError') {
+          setCameraState('unavailable');
+          setCameraErrorMsg(
+            'Kamera sedang dipakai oleh aplikasi atau tab lain. Tutup aplikasi kamera lain lalu ketuk Coba Aktifkan Kamera.'
+          );
+        } else if (errName === 'NotFoundError' || errName === 'DevicesNotFoundError') {
+          setCameraState('unavailable');
+          setCameraErrorMsg(
+            'Kamera tidak ditemukan pada perangkat ini. Pastikan perangkat memiliki kamera aktif dan tidak dinonaktifkan.'
+          );
+        } else {
+          setCameraState('unavailable');
+          setCameraErrorMsg(
+            'Kamera gagal dibuka otomatis. Ketuk tombol di bawah untuk mengaktifkan kamera secara langsung.'
+          );
+        }
+      }
+    },
+    [isInIframe, performScanTick, stopCamera]
+  );
 
   useEffect(() => {
-    startCamera();
+    isMountedRef.current = true;
+    startCamera(false);
+
+    const handleVisibilityChange = () => {
+      if (
+        document.visibilityState === 'visible' &&
+        isMountedRef.current &&
+        !hasVerifiedRef.current &&
+        !isAcquiringRef.current
+      ) {
+        const videoTracks = streamRef.current?.getVideoTracks() ?? [];
+        const stillLive =
+          Boolean(streamRef.current?.active) &&
+          videoTracks.some((track) => track.readyState === 'live');
+        if (!stillLive) {
+          startCamera(false);
+        } else if (videoRef.current && videoRef.current.paused) {
+          videoRef.current.play().catch(() => {});
+        }
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
     return () => {
+      isMountedRef.current = false;
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
       stopCamera();
     };
   }, [startCamera, stopCamera]);
@@ -220,9 +515,18 @@ export const Screen1Scanner: React.FC<Screen1ScannerProps> = ({ onKtpVerified })
   const handleScanButtonClick = () => {
     setScanFeedback('scanning');
     invalidCooldownRef.current = 0;
-    if (cameraState !== 'active') {
-      startCamera();
+    const videoTracks = streamRef.current?.getVideoTracks() ?? [];
+    const hasLiveStream =
+      cameraState === 'active' &&
+      Boolean(streamRef.current?.active) &&
+      videoTracks.some((track) => track.readyState === 'live');
+
+    if (!hasLiveStream) {
+      startCamera(true);
     } else {
+      if (videoRef.current && videoRef.current.paused) {
+        videoRef.current.play().catch(() => {});
+      }
       if (scanTimerRef.current !== null) {
         window.clearTimeout(scanTimerRef.current);
       }
@@ -298,15 +602,22 @@ export const Screen1Scanner: React.FC<Screen1ScannerProps> = ({ onKtpVerified })
           {/* Unavailable / Permission Fallback */}
           {cameraState !== 'active' && (
             <div className="absolute inset-0 z-30 flex items-center justify-center bg-slate-950/90 p-5">
-              <div className="w-full max-w-[320px] rounded-2xl bg-slate-900 border border-slate-700 p-5 text-center text-white shadow-xl">
+              <div className="w-full max-w-[330px] rounded-2xl bg-slate-900 border border-slate-700 p-5 text-center text-white shadow-xl">
                 <div className="mx-auto mb-2.5 flex h-11 w-11 items-center justify-center rounded-full bg-blue-600/20 text-blue-400">
-                  <Camera className="h-5 w-5" />
+                  {cameraState === 'initializing' ? (
+                    <Loader2 className="h-5 w-5 animate-spin" />
+                  ) : (
+                    <Camera className="h-5 w-5" />
+                  )}
                 </div>
                 <p className="text-sm font-semibold text-white">
-                  {cameraState === 'initializing'
-                    ? 'Menyiapkan kamera belakang...'
-                    : 'Kamera Belum Aktif'}
+                  {cameraState === 'initializing' ? initStepText : 'Kamera Belum Aktif'}
                 </p>
+                {cameraState === 'initializing' && showManualRetry && !cameraErrorMsg && (
+                  <p className="mt-2 text-xs text-slate-300 leading-relaxed">
+                    Jika dialog izin kamera tidak muncul otomatis, ketuk tombol di bawah untuk mengaktifkan kamera.
+                  </p>
+                )}
                 {cameraErrorMsg && (
                   <p className="mt-2 text-xs text-slate-300 leading-relaxed">{cameraErrorMsg}</p>
                 )}
@@ -315,15 +626,35 @@ export const Screen1Scanner: React.FC<Screen1ScannerProps> = ({ onKtpVerified })
                     Kode: {cameraErrorCode}
                   </p>
                 )}
-                {(cameraState === 'denied' || cameraState === 'unavailable') && (
-                  <button
-                    type="button"
-                    onClick={startCamera}
-                    className="mt-4 w-full inline-flex items-center justify-center gap-2 rounded-xl bg-blue-600 hover:bg-blue-700 px-4 py-2.5 text-xs font-bold text-white min-h-[44px] transition cursor-pointer"
-                  >
-                    <RefreshCw className="w-4 h-4" />
-                    <span>Coba Aktifkan Kamera</span>
-                  </button>
+                {(cameraState === 'denied' ||
+                  cameraState === 'unavailable' ||
+                  showManualRetry) && (
+                  <div className="mt-4 flex flex-col gap-2.5">
+                    <button
+                      type="button"
+                      onClick={() => startCamera(true)}
+                      className="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-blue-600 hover:bg-blue-700 px-4 py-2.5 text-xs font-bold text-white min-h-[44px] transition cursor-pointer"
+                    >
+                      <RefreshCw className="w-4 h-4" />
+                      <span>
+                        {cameraState === 'initializing'
+                          ? 'Aktifkan Kamera Sekarang'
+                          : 'Coba Aktifkan Kamera'}
+                      </span>
+                    </button>
+
+                    {isInIframe && (
+                      <a
+                        href={typeof window !== 'undefined' ? window.location.href : '#'}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-600 px-4 py-2.5 text-xs font-semibold text-white min-h-[42px] transition"
+                      >
+                        <ExternalLink className="w-4 h-4" />
+                        <span>Buka di Tab Baru</span>
+                      </a>
+                    )}
+                  </div>
                 )}
               </div>
             </div>
