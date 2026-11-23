@@ -7,6 +7,7 @@ import {VitePWA} from 'vite-plugin-pwa';
 
 export default defineConfig(() => {
   return {
+    base: './',
     plugins: [
       react(),
       tailwindcss(),
@@ -22,30 +23,30 @@ export default defineConfig(() => {
           'assets/extracted/wawan_gunawan_photo.png',
         ],
         manifest: {
-          id: '/',
+          id: './',
           name: 'Surat Suara - e-Voting Pilkades',
           short_name: 'Surat Suara',
           description: 'Aplikasi e-Voting Pemilihan Kepala Desa berbasis Web Offline dengan pemindai QR KTP dan bukti QRIS.',
           theme_color: '#166534',
           background_color: '#ffffff',
           display: 'standalone',
-          start_url: '/',
-          scope: '/',
+          start_url: './',
+          scope: './',
           icons: [
             {
-              src: '/pwa-192x192.png',
+              src: 'pwa-192x192.png',
               sizes: '192x192',
               type: 'image/png',
               purpose: 'any',
             },
             {
-              src: '/pwa-512x512.png',
+              src: 'pwa-512x512.png',
               sizes: '512x512',
               type: 'image/png',
               purpose: 'any',
             },
             {
-              src: '/pwa-maskable-512x512.png',
+              src: 'pwa-maskable-512x512.png',
               sizes: '512x512',
               type: 'image/png',
               purpose: 'maskable',

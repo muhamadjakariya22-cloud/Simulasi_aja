@@ -12,6 +12,6 @@ export const CANDIDATES: Candidate[] = [
     number: '2',
     name: 'WAWAN GUNAWAN',
     variant: 'photo',
-    imageUrl: '/assets/extracted/wawan_gunawan_photo.png',
+    imageUrl: './assets/extracted/wawan_gunawan_photo.png',
   },
 ];

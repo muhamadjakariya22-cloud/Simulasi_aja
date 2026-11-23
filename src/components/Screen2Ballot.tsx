@@ -41,7 +41,7 @@ export const Screen2Ballot: React.FC<Screen2BallotProps> = ({
         </div>
         <div className="mx-auto max-w-2xl flex flex-col items-center text-center">
           <img
-            src="/assets/extracted/desa_subang_emblem.png"
+            src="./assets/extracted/desa_subang_emblem.png"
             alt="Lambang Desa Curugrendeng"
             className="w-16 h-20 sm:w-20 sm:h-24 object-contain"
           />
